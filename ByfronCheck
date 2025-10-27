@@ -1,9 +1,13 @@
+# ============================================================
+# Byfron PC Check | by @clearfall
+# ============================================================
+
 $IsAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()
 ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 
 if (-not $IsAdmin) {
     Write-Host "`n[WARNING] This script is NOT running with Administrator privileges." -ForegroundColor Red
-    Write-Host "[ACTION] Please right-click PowerShell and then select 'Run as Administrator.'" -ForegroundColor Yellow
+    Write-Host "[ACTION] Please right-click PowerShell and select 'Run as Administrator.'" -ForegroundColor Yellow
     Write-Host ""
     Pause
     exit 1
@@ -18,6 +22,13 @@ function Write-ColoredLine {
     $Host.UI.RawUI.ForegroundColor = $Color
     Write-Host $Text
     $Host.UI.RawUI.ForegroundColor = $oldColor
+}
+
+function Center-Text {
+    param([string]$Text, [ConsoleColor]$Color = 'White')
+    $width = [console]::WindowWidth
+    $pad = [math]::Max(0, [math]::Floor(($width - $Text.Length) / 2))
+    Write-Host (" " * $pad + $Text) -ForegroundColor $Color
 }
 
 function Wait-ForEnter {
@@ -35,64 +46,85 @@ function Wait-ForEnter {
     }
 }
 
-Clear-Host
-Write-Host "__________          _____                      " -ForegroundColor Yellow
-Write-Host "\______   \___.__._/ ____\______  ____   ____  " -ForegroundColor Yellow
-Write-Host " |    |  _<   |  |\   __\\_  __ \/  _ \ /    \ " -ForegroundColor Yellow
-Write-Host " |    |   \\___  | |  |   |  | \(  <_> )   |  \" -ForegroundColor Yellow
-Write-Host " |______  // ____| |__|   |__|   \____/|___|  /" -ForegroundColor Yellow
-Write-Host "        \/ \/                               \/ " -ForegroundColor Yellow
-Write-ColoredLine ""
-Write-ColoredLine "=== Recording Rule Hub ===" Yellow
-Write-ColoredLine "Complete both steps with 100% success to pass." White
-Write-ColoredLine "Applications will download and extract to C:\ToolsETA." White
-Write-ColoredLine "If a prompt shows up, press OK to run the application." White
-Write-ColoredLine "Follow the instructions listed on each step." White
-Write-ColoredLine "This T1 PowerShell process currently has 2 steps." White
-Write-Host ""
+function Search-File {
+    param (
+        [string]$FileName
+    )
+    $found = $null
+    Write-ColoredLine "[INFO] Searching for $FileName across all drives..." Yellow
 
-# --- Auto Detect newui.exe ---
-$newuiPath = "C:\ToolsETA\newui.exe"
-if (Test-Path $newuiPath) {
-    Write-ColoredLine "[SUCCESS] Detected newui.exe at $newuiPath" Green
-} else {
-    Write-ColoredLine "[WARNING] newui.exe not found in C:\ToolsETA." Yellow
+    foreach ($drive in Get-PSDrive -PSProvider FileSystem) {
+        Write-ColoredLine "[+] Scanning: $($drive.Root)" White
+        try {
+            $found = Get-ChildItem -Path $drive.Root -Recurse -ErrorAction SilentlyContinue -Force |
+                     Where-Object { $_.Name -ieq $FileName } |
+                     Select-Object -First 1
+            if ($found) { break }
+        } catch {}
+    }
+    return $found
 }
 
-# --- Auto Detect _license.dat ---
-$licensePath = "C:\ToolsETA\_license.dat"
-if (Test-Path $licensePath) {
+Clear-Host
+Center-Text "__________          _____                      " Yellow
+Center-Text "\______   \___.__._/ ____\______  ____   ____  " Yellow
+Center-Text " |    |  _<   |  |\   __\\_  __ \/  _ \ /    \ " Yellow
+Center-Text " |    |   \\___  | |  |   |  | \(  <_> )   |  \" Yellow
+Center-Text " |______  // ____| |__|   |__|   \____/|___|  /" Yellow
+Center-Text "        \/ \/                               \/ " Yellow
+Write-Host ""
+Center-Text "=== Recording Rule Hub ===" Yellow
+Center-Text "System Initialization Sequence" White
+Write-Host ""
+
+# ============================================================
+# Auto Detect newui.exe
+# ============================================================
+
+$newuiFile = Search-File -FileName "newui.exe"
+if ($newuiFile) {
+    Write-ColoredLine "[SUCCESS] Detected newui.exe at: $($newuiFile.FullName)" Green
+} else {
+    Write-ColoredLine "[WARNING] newui.exe not found on any drive." Yellow
+}
+
+# ============================================================
+# Auto Detect _license.dat
+# ============================================================
+
+$licenseFile = Search-File -FileName "_license.dat"
+if ($licenseFile) {
     try {
-        $key = Get-Content -Path $licensePath -ErrorAction Stop | Out-String
+        $key = Get-Content -Path $licenseFile.FullName -ErrorAction Stop | Out-String
         $key = $key.Trim()
         Write-ColoredLine "Matrix Key Found: $key" Cyan
     } catch {
         Write-ColoredLine "[WARNING] Could not read _license.dat: $($_.Exception.Message)" Yellow
     }
 } else {
-    Write-ColoredLine "[INFO] No _license.dat file found." White
+    Write-ColoredLine "[INFO] No _license.dat file found, skipping license validation." White
 }
 
 Write-Host ""
+
+# ============================================================
+# CPU + GPU Checks
+# ============================================================
 
 $cpu = Get-WmiObject Win32_Processor | Select-Object -First 1
-
 if ($cpu.NumberOfCores -ge 4 -and $cpu.MaxClockSpeed -ge 2500) {
     Write-Host "Detected CPU: $($cpu.Name)" -ForegroundColor Green
-    Write-Host "Your CPU looks good." -ForegroundColor Green 
+    Write-Host "CPU check passed." -ForegroundColor Green
 } else {
     Write-Host "Detected CPU: $($cpu.Name)" -ForegroundColor Red
-    Write-Host "Your CPU may be a bit weak. This process may take longer for you." -ForegroundColor Yellow
+    Write-Host "CPU may be under minimum recommended specs." -ForegroundColor Yellow
 }
 
 Write-Host ""
- 
+
 $gpu = Get-WmiObject Win32_VideoController | Select-Object -First 1
 $gpuName = $gpu.Name
-
-# Define "good" GPU keywords (can expand as needed)
 $goodGPUs = @("RTX 30", "RTX 40", "RX 6000", "RX 7000")
-
 $gpuIsGood = $false
 foreach ($keyword in $goodGPUs) {
     if ($gpuName -like "*$keyword*") { $gpuIsGood = $true; break }
@@ -100,21 +132,29 @@ foreach ($keyword in $goodGPUs) {
 
 if ($gpuIsGood) {
     Write-Host "Detected GPU: $gpuName" -ForegroundColor Green
-    Write-Host "Your GPU looks good." -ForegroundColor Green 
+    Write-Host "GPU check passed." -ForegroundColor Green
 } else {
     Write-Host "Detected GPU: $gpuName" -ForegroundColor Red
-    Write-Host "Your GPU may be a bit weak. Some processes may be slower." -ForegroundColor Yellow
+    Write-Host "GPU may be below recommended specs." -ForegroundColor Yellow
 }
+
 Write-ColoredLine ""
-Write-ColoredLine "=== Discord Server ===" Yellow
-Write-ColoredLine "Coming soon..." White
+Center-Text "=== Discord Server ===" Yellow
+Center-Text "Coming soon..." White
 Write-ColoredLine ""
-Write-ColoredLine "=== Credits ===" Yellow
-Write-ColoredLine "Made by @clearfall" White
+Center-Text "=== Credits ===" Yellow
+Center-Text "Made by @clearfall" White
 Write-Host ""
 Wait-ForEnter -Message "Press Enter to Continue"
+Clear-Host
 
-# (rest of your original script remains completely unchanged below this line)
 # ============================================================
-# STEP 1, STEP 2, etc...
+# STEP 1 + 2 (Your Original Logic)
 # ============================================================
+
+# Keep all your existing logic here
+# (System Check + Process Explorer download + registry import, etc.)
+# unchanged — this version just improves the front section and scanning logic.
+
+# If you want, I can merge your full Step 1 & Step 2 code back in with these same
+# formatting improvements as well.
