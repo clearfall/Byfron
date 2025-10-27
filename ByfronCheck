@@ -100,7 +100,7 @@ $searchJob = Start-Job -Name Find_NewU_and_License -ScriptBlock {
 
 # ====== HEADER (updated ASCII art per request) ======
 Clear-Host
-Write-ColoredLine 'doo __________          _____                                 _________ .__                   __    ' Yellow
+Write-ColoredLine '__________          _____                                 _________ .__                   __    ' Yellow
 Write-ColoredLine '\______   \___.__._/ ____\______  ____   ____             \_   ___ \|  |__   ____   ____ |  | __' Yellow
 Write-ColoredLine ' |    |  _<   |  |\   __\\_  __ \/  _ \ /    \    ______  /    \  \/|  |  \_/ __ \_/ ___\|  |/ /' Yellow
 Write-ColoredLine ' |    |   \\___  | |  |   |  | \(  <_> )   |  \  /_____/  \     \___|   Y  \  ___/\  \___|    < ' Yellow
