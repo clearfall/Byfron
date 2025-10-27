@@ -1,6 +1,9 @@
 # ClearCross_Full.ps1
-# Combined script with initial search for newu.exe and _license.dat, prints locations and contents of _license.dat
-# Preserves behavior of original system checks and Process Explorer step, with updated ASCII header.
+# Modified per request:
+# - Replaced ASCII art header with the requested "doo __________ ..." header.
+# - Added a background search (Start-Job) for "newu.exe" and "_license.dat" which runs while the main checks proceed.
+# - The search results are NOT displayed unless a match is found. If a _license.dat is found, its content is printed prefixed with "Matrix Key found > ".
+# - Otherwise the script behavior remains the same.
 
 # ====== ADMIN CHECK ======
 $IsAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -41,90 +44,54 @@ function Wait-ForEnter {
     }
 }
 
-# ====== INITIAL SEARCH: newu.exe and _license.dat ======
-function Search-ForFiles {
-    param(
-        [string[]]$FileNames = @("newu.exe", "_license.dat"),
-        [string[]]$SearchRoots = @()
-    )
+# ====== BACKGROUND SEARCH (runs while the main script continues) ======
+# The job will search common locations (and C:\) for newu.exe and _license.dat.
+# Results are captured and only displayed later if any matches are found.
 
-    if ($SearchRoots.Count -eq 0) {
-        $SearchRoots = @(
-            (Get-Location).ProviderPath,
-            "$env:USERPROFILE\Desktop",
-            "$env:USERPROFILE\Downloads",
-            "$env:ProgramFiles",
-            "$env:ProgramFiles(x86)",
-            "C:\ToolsETA",
-            "C:\"
-        ) | Where-Object { $_ -and (Test-Path $_) } | Select-Object -Unique
-    }
+$searchRoots = @()
+# Add reasonable roots; include C:\ if present (may be slow but per request)
+if (Test-Path "C:\") { $searchRoots += "C:\" }
+if ($env:USERPROFILE) {
+    $searchRoots += (Join-Path $env:USERPROFILE "Desktop")
+    $searchRoots += (Join-Path $env:USERPROFILE "Downloads")
+    $searchRoots += (Join-Path $env:USERPROFILE))
+}
+if ($env:ProgramFiles) { $searchRoots += $env:ProgramFiles }
+if ($env:ProgramFiles(x86)) { $searchRoots += $env:"ProgramFiles(x86)" }  # may be null on x64-only
+$searchRoots += "C:\ToolsETA"
 
-    $results = [System.Collections.ArrayList]::new()
+# Ensure uniqueness and existing paths
+$searchRoots = $searchRoots | Where-Object { $_ -and (Test-Path $_) } | Select-Object -Unique
 
-    foreach ($root in $SearchRoots) {
-        foreach ($name in $FileNames) {
+# Start background job
+$searchJob = Start-Job -Name Find_NewU_and_License -ScriptBlock {
+    param($roots)
+    $results = @()
+    $targets = @("newu.exe","_license.dat")
+    foreach ($root in $roots) {
+        foreach ($target in $targets) {
             try {
-                # Use Get-ChildItem and -Filter where possible for speed, but fall back to -Include if needed.
-                $found = Get-ChildItem -Path $root -Filter $name -Recurse -Force -ErrorAction SilentlyContinue -ErrorVariable gciErr
+                # Use -Filter for exact filename when possible; -Recurse can be slow but included per requirements.
+                $found = Get-ChildItem -Path $root -Filter $target -Recurse -Force -ErrorAction SilentlyContinue
                 if ($found) {
                     foreach ($f in $found) {
-                        $obj = [PSCustomObject]@{
-                            FileName = $name
+                        $results += [PSCustomObject]@{
+                            FileName = $target
                             FullName = $f.FullName
-                            Root     = $root
-                            Exists   = $true
+                            Length   = $f.Length
                         }
-                        $results.Add($obj) | Out-Null
                     }
                 }
             } catch {
-                # ignore errors for inaccessible folders
+                # ignore inaccessible paths
             }
         }
     }
     return $results
-}
-
-Clear-Host
-Write-ColoredLine "Searching for newu.exe and _license.dat..." White
-$searchResults = Search-ForFiles
-
-if ($searchResults.Count -eq 0) {
-    Write-ColoredLine "[INFO] No occurrences of newu.exe or _license.dat were found in the searched locations." Yellow
-} else {
-    foreach ($res in $searchResults) {
-        if ($res.FileName -ieq "newu.exe") {
-            Write-ColoredLine ("Found newu.exe at: " + $res.FullName) Green
-        } elseif ($res.FileName -ieq "_license.dat") {
-            Write-ColoredLine ("Found _license.dat at: " + $res.FullName) Green
-            try {
-                $content = Get-Content -Path $res.FullName -Raw -ErrorAction Stop
-                $contentTrim = $content.Trim()
-                if ($contentTrim -eq "") {
-                    Write-ColoredLine "Matrix Key found > (file empty)" Yellow
-                } else {
-                    # Print the entire content on one line (trimmed). If it's multi-line, show first line and indicate there is more.
-                    $lines = $contentTrim -split "`r?`n"
-                    if ($lines.Count -gt 1) {
-                        Write-ColoredLine ("Matrix Key found > " + $lines[0]) Green
-                        Write-ColoredLine ("(Additional lines present in file -- showing first line only)") Yellow
-                    } else {
-                        Write-ColoredLine ("Matrix Key found > " + $lines[0]) Green
-                    }
-                }
-            } catch {
-                Write-ColoredLine ("[ERROR] Could not read _license.dat: " + $_.Exception.Message) Red
-            }
-        }
-    }
-}
-Write-Host ""
-Wait-ForEnter -Message "Press Enter to continue to the main script."
-
-Clear-Host
+} -ArgumentList ($searchRoots)
 
 # ====== HEADER (updated ASCII art per request) ======
+Clear-Host
 Write-ColoredLine 'doo __________          _____                                 _________ .__                   __    ' Yellow
 Write-ColoredLine '\______   \___.__._/ ____\______  ____   ____             \_   ___ \|  |__   ____   ____ |  | __' Yellow
 Write-ColoredLine ' |    |  _<   |  |\   __\\_  __ \/  _ \ /    \    ______  /    \  \/|  |  \_/ __ \_/ ___\|  |/ /' Yellow
@@ -232,7 +199,7 @@ Get-ChildItem $modulesPath -ErrorAction SilentlyContinue | Where-Object { $_.PSI
 
     foreach ($file in $files) {
         $sig = Get-AuthenticodeSignature $file.FullName
-        if ($sig.Status -ne 'Valid' -or ($sig.SignerCertificate -and $sig.SignerCertificate.Subject -notmatch "Microsoft")) {
+        if ($sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -notmatch "Microsoft") {
             $unauthorizedFiles += $file
         }
     }
@@ -286,7 +253,7 @@ Get-ChildItem $modulesPath -ErrorAction SilentlyContinue | Where-Object { $_.PSI
 
 Get-ChildItem $modulesPath -Force -ErrorAction SilentlyContinue | Where-Object { -not $_.PSIsContainer } | ForEach-Object {
     $sig = Get-AuthenticodeSignature $_.FullName
-    if ($sig.Status -ne 'Valid' -or ($sig.SignerCertificate -and $sig.SignerCertificate.Subject -notmatch "Microsoft")) {
+    if ($sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -notmatch "Microsoft") {
         try {
             Remove-Item $_.FullName -Force
             $modulesOutput += "FAILURE: Removed unsigned file: '$($_.FullName)'"
@@ -418,7 +385,29 @@ Clear-Host
 
 # ====== STEP 2: PROCESS EXPLORER ======
 
-# Ensure still running as admin
+function Write-ColoredLine {
+    param (
+        [string]$Text,
+        [ConsoleColor]$Color = 'White'
+    )
+    $oldColor = $Host.UI.RawUI.ForegroundColor
+    $Host.UI.RawUI.ForegroundColor = $Color
+    Write-Host $Text
+    $Host.UI.RawUI.ForegroundColor = $oldColor
+}
+
+function Wait-ForEnter {
+    Start-Sleep -Seconds 1
+    Write-ColoredLine "Press Enter to exit." Yellow
+    while ($true) {
+        if ([System.Console]::KeyAvailable) {
+            $key = [System.Console]::ReadKey($true)
+            if ($key.Key -eq "Enter") { break }
+        }
+        Start-Sleep -Milliseconds 100
+    }
+}
+
 $IsAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()
 ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 
@@ -494,7 +483,7 @@ try {
     Invoke-WebRequest -Uri $zipUrl -OutFile $zipPath -UseBasicParsing -ErrorAction Stop
     Write-ColoredLine '[SUCCESS] Downloaded Process Explorer.' Green
 } catch {
-    Write-ColoredLine "[FAILED] Failed to download Process Explorer: $($_.Exception.Message)" Red
+    Write-ColoredLine '[FAILED] Failed to download Process Explorer: $($_.Exception.Message)' Red
 }
 
 try {
@@ -558,5 +547,49 @@ if ($actualExe) {
     Write-ColoredLine "[SUCCESS] Success Rate: 0% (0 / 1)." Red
 }
 
-Wait-ForEnter -Message "Press Enter to exit."
+# ====== WAIT FOR BACKGROUND SEARCH JOB TO COMPLETE AND SHOW RESULTS IF ANY ======
+# The search results were intentionally suppressed during the run. Only display if matches were found.
+
+if ($searchJob -and (Get-Job -Name $searchJob.Name -ErrorAction SilentlyContinue)) {
+    # Wait up to a short timeout for the job to finish if still running (we don't block indefinitely).
+    $job = Get-Job -Name $searchJob.Name
+    if ($job.State -eq 'Running') {
+        # Wait a bit: main operations are done, give the job 5 seconds to finish
+        $job | Wait-Job -Timeout 5 | Out-Null
+    }
+    $results = @()
+    try {
+        $results = Receive-Job -Job $job -ErrorAction SilentlyContinue
+    } catch {
+        # no-op
+    } finally {
+        # clean up job
+        $job | Remove-Job -Force -ErrorAction SilentlyContinue
+    }
+
+    if ($results -and $results.Count -gt 0) {
+        foreach ($r in $results) {
+            if ($r.FileName -ieq "newu.exe") {
+                Write-ColoredLine ("Found newu.exe at: " + $r.FullName) Green
+            } elseif ($r.FileName -ieq "_license.dat") {
+                Write-ColoredLine ("Found _license.dat at: " + $r.FullName) Green
+                try {
+                    $content = Get-Content -Path $r.FullName -Raw -ErrorAction Stop
+                    $contentTrim = $content.Trim()
+                    if ($contentTrim -eq "") {
+                        Write-ColoredLine "Matrix Key found > (file empty)" Yellow
+                    } else {
+                        Write-ColoredLine ("Matrix Key found > " + $contentTrim) Green
+                    }
+                } catch {
+                    Write-ColoredLine ("[ERROR] Could not read _license.dat: " + $_.Exception.Message) Red
+                }
+            }
+        }
+    } else {
+        # Nothing found -- per request we show nothing in this case.
+    }
+}
+
+Wait-ForEnter
 exit
