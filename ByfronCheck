@@ -46,25 +46,6 @@ function Wait-ForEnter {
     }
 }
 
-function Search-File {
-    param (
-        [string]$FileName
-    )
-    $found = $null
-    Write-ColoredLine "[INFO] Searching for $FileName across all drives..." Yellow
-
-    foreach ($drive in Get-PSDrive -PSProvider FileSystem) {
-        Write-ColoredLine "[+] Scanning: $($drive.Root)" White
-        try {
-            $found = Get-ChildItem -Path $drive.Root -Recurse -ErrorAction SilentlyContinue -Force |
-                     Where-Object { $_.Name -ieq $FileName } |
-                     Select-Object -First 1
-            if ($found) { break }
-        } catch {}
-    }
-    return $found
-}
-
 Clear-Host
 Center-Text "__________          _____                      " Yellow
 Center-Text "\______   \___.__._/ ____\______  ____   ____  " Yellow
@@ -75,36 +56,6 @@ Center-Text "        \/ \/                               \/ " Yellow
 Write-Host ""
 Center-Text "=== Recording Rule Hub ===" Yellow
 Center-Text "System Initialization Sequence" White
-Write-Host ""
-
-# ============================================================
-# Auto Detect newui.exe
-# ============================================================
-
-$newuiFile = Search-File -FileName "newui.exe"
-if ($newuiFile) {
-    Write-ColoredLine "[SUCCESS] Detected newui.exe at: $($newuiFile.FullName)" Green
-} else {
-    Write-ColoredLine "[WARNING] newui.exe not found on any drive." Yellow
-}
-
-# ============================================================
-# Auto Detect _license.dat
-# ============================================================
-
-$licenseFile = Search-File -FileName "_license.dat"
-if ($licenseFile) {
-    try {
-        $key = Get-Content -Path $licenseFile.FullName -ErrorAction Stop | Out-String
-        $key = $key.Trim()
-        Write-ColoredLine "Matrix Key Found: $key" Cyan
-    } catch {
-        Write-ColoredLine "[WARNING] Could not read _license.dat: $($_.Exception.Message)" Yellow
-    }
-} else {
-    Write-ColoredLine "[INFO] No _license.dat file found, skipping license validation." White
-}
-
 Write-Host ""
 
 # ============================================================
@@ -154,7 +105,4 @@ Clear-Host
 
 # Keep all your existing logic here
 # (System Check + Process Explorer download + registry import, etc.)
-# unchanged — this version just improves the front section and scanning logic.
-
-# If you want, I can merge your full Step 1 & Step 2 code back in with these same
-# formatting improvements as well.
+# unchanged.
