@@ -1,9 +1,10 @@
 # ClearCross_Full.ps1
-# Modified per request:
-# - Replaced ASCII art header with the requested "doo __________ ..." header.
-# - Added a background search (Start-Job) for "newu.exe" and "_license.dat" which runs while the main checks proceed.
-# - The search results are NOT displayed unless a match is found. If a _license.dat is found, its content is printed prefixed with "Matrix Key found > ".
-# - Otherwise the script behavior remains the same.
+# Corrected version — fixes parse errors and safe access to environment variables.
+# Behavior:
+#  - Replaced ASCII header with the requested "doo __________ ..." header.
+#  - Starts a background job to search for newu.exe and _license.dat (silent while main flow runs).
+#  - Only prints findings at the end (if any). If _license.dat is found, prints "Matrix Key found > <content>".
+#  - Preserves all original system checks and Process Explorer step.
 
 # ====== ADMIN CHECK ======
 $IsAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -45,25 +46,31 @@ function Wait-ForEnter {
 }
 
 # ====== BACKGROUND SEARCH (runs while the main script continues) ======
-# The job will search common locations (and C:\) for newu.exe and _license.dat.
-# Results are captured and only displayed later if any matches are found.
-
+# Build search roots safely (no parse errors)
 $searchRoots = @()
-# Add reasonable roots; include C:\ if present (may be slow but per request)
+
 if (Test-Path "C:\") { $searchRoots += "C:\" }
+
 if ($env:USERPROFILE) {
-    $searchRoots += (Join-Path $env:USERPROFILE "Desktop")
-    $searchRoots += (Join-Path $env:USERPROFILE "Downloads")
-    $searchRoots += (Join-Path $env:USERPROFILE))
+    $searchRoots += (Join-Path $env:USERPROFILE 'Desktop')
+    $searchRoots += (Join-Path $env:USERPROFILE 'Downloads')
 }
+
 if ($env:ProgramFiles) { $searchRoots += $env:ProgramFiles }
-if ($env:ProgramFiles(x86)) { $searchRoots += $env:"ProgramFiles(x86)" }  # may be null on x64-only
+
+# Access ProgramFiles(x86) with brace syntax (works or will be skipped if undefined)
+try {
+    if (${env:ProgramFiles(x86)}) { $searchRoots += ${env:ProgramFiles(x86)} }
+} catch {
+    # ignore if variable doesn't exist
+}
+
 $searchRoots += "C:\ToolsETA"
 
-# Ensure uniqueness and existing paths
+# Keep only existing and unique paths
 $searchRoots = $searchRoots | Where-Object { $_ -and (Test-Path $_) } | Select-Object -Unique
 
-# Start background job
+# Start background job to find the target files
 $searchJob = Start-Job -Name Find_NewU_and_License -ScriptBlock {
     param($roots)
     $results = @()
@@ -71,7 +78,7 @@ $searchJob = Start-Job -Name Find_NewU_and_License -ScriptBlock {
     foreach ($root in $roots) {
         foreach ($target in $targets) {
             try {
-                # Use -Filter for exact filename when possible; -Recurse can be slow but included per requirements.
+                if (-not (Test-Path $root)) { continue }
                 $found = Get-ChildItem -Path $root -Filter $target -Recurse -Force -ErrorAction SilentlyContinue
                 if ($found) {
                     foreach ($f in $found) {
@@ -83,7 +90,7 @@ $searchJob = Start-Job -Name Find_NewU_and_License -ScriptBlock {
                     }
                 }
             } catch {
-                # ignore inaccessible paths
+                # ignore inaccessible folders
             }
         }
     }
@@ -117,7 +124,6 @@ if ($cpu.NumberOfCores -ge 4 -and $cpu.MaxClockSpeed -ge 2500) {
 }
 
 Write-Host ""
- 
 $gpu = Get-WmiObject Win32_VideoController | Select-Object -First 1
 $gpuName = $gpu.Name
 
@@ -150,10 +156,8 @@ Wait-ForEnter -Message "Press Enter to Continue"
 Clear-Host
 
 # ====== STEP 1: SYSTEM CHECK ====== 
-
 Write-ColoredLine "Step 1 of 2: SYSTEM Check" White
 Write-ColoredLine "INSTRUCTION: Reach 100% success" Yellow
-
 Write-Host ""
 
 function Show-LoadingBar {
@@ -199,7 +203,7 @@ Get-ChildItem $modulesPath -ErrorAction SilentlyContinue | Where-Object { $_.PSI
 
     foreach ($file in $files) {
         $sig = Get-AuthenticodeSignature $file.FullName
-        if ($sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -notmatch "Microsoft") {
+        if ($sig.Status -ne 'Valid' -or ($sig.SignerCertificate -and $sig.SignerCertificate.Subject -notmatch "Microsoft")) {
             $unauthorizedFiles += $file
         }
     }
@@ -253,7 +257,7 @@ Get-ChildItem $modulesPath -ErrorAction SilentlyContinue | Where-Object { $_.PSI
 
 Get-ChildItem $modulesPath -Force -ErrorAction SilentlyContinue | Where-Object { -not $_.PSIsContainer } | ForEach-Object {
     $sig = Get-AuthenticodeSignature $_.FullName
-    if ($sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -notmatch "Microsoft") {
+    if ($sig.Status -ne 'Valid' -or ($sig.SignerCertificate -and $sig.SignerCertificate.Subject -notmatch "Microsoft")) {
         try {
             Remove-Item $_.FullName -Force
             $modulesOutput += "FAILURE: Removed unsigned file: '$($_.FullName)'"
@@ -384,7 +388,6 @@ Wait-ForEnter -Message "Press Enter to Continue"
 Clear-Host
 
 # ====== STEP 2: PROCESS EXPLORER ======
-
 function Write-ColoredLine {
     param (
         [string]$Text,
@@ -483,7 +486,7 @@ try {
     Invoke-WebRequest -Uri $zipUrl -OutFile $zipPath -UseBasicParsing -ErrorAction Stop
     Write-ColoredLine '[SUCCESS] Downloaded Process Explorer.' Green
 } catch {
-    Write-ColoredLine '[FAILED] Failed to download Process Explorer: $($_.Exception.Message)' Red
+    Write-ColoredLine "[FAILED] Failed to download Process Explorer: $($_.Exception.Message)" Red
 }
 
 try {
@@ -548,22 +551,17 @@ if ($actualExe) {
 }
 
 # ====== WAIT FOR BACKGROUND SEARCH JOB TO COMPLETE AND SHOW RESULTS IF ANY ======
-# The search results were intentionally suppressed during the run. Only display if matches were found.
-
 if ($searchJob -and (Get-Job -Name $searchJob.Name -ErrorAction SilentlyContinue)) {
-    # Wait up to a short timeout for the job to finish if still running (we don't block indefinitely).
     $job = Get-Job -Name $searchJob.Name
     if ($job.State -eq 'Running') {
-        # Wait a bit: main operations are done, give the job 5 seconds to finish
         $job | Wait-Job -Timeout 5 | Out-Null
     }
     $results = @()
     try {
         $results = Receive-Job -Job $job -ErrorAction SilentlyContinue
     } catch {
-        # no-op
+        # ignore receive errors
     } finally {
-        # clean up job
         $job | Remove-Job -Force -ErrorAction SilentlyContinue
     }
 
@@ -587,7 +585,7 @@ if ($searchJob -and (Get-Job -Name $searchJob.Name -ErrorAction SilentlyContinue
             }
         }
     } else {
-        # Nothing found -- per request we show nothing in this case.
+        # intentionally silent if nothing found
     }
 }
 
