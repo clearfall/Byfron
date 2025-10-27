@@ -1,13 +1,4 @@
 
-# Full updated script with:
-#  - Replaced ASCII header with requested "doo __________ ..." header
-#  - Background silent search for newu.exe and _license.dat while main checks run
-#  - Only prints findings at the end (if any). If _license.dat found, prints "Matrix Key found > <content>"
-#  - Shortened Recording Rule Hub block and credit to @clearfall, "Discord coming soon."
-#  - Fixed previous syntax errors and safe environment variable access
-#  - Preserves the rest of the original system checks and Process Explorer step
-
-# ====== ADMIN CHECK ======
 $IsAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()
 ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 
@@ -118,10 +109,11 @@ Write-ColoredLine '        \/ \/                               \/               
 Write-ColoredLine ""
 
 # ====== SHORTENED RECORDING RULE HUB (per request) ======
-Write-ColoredLine "=== Recording Rule Hub ===" Yellow
-Write-ColoredLine "Complete both steps." White
-Write-ColoredLine "Apps extract to C:\ToolsETA" White
-Write-ColoredLine "Credits: @clearfall" White
+Write-ColoredLine "=== Byfron PC Check ===" Yellow
+Write-ColoredLine "Complete all steps.." White
+Write-ColoredLine " " White
+Write-ColoredLine "=== Credits ===" Yellow
+Write-ColoredLine "@clearfall" White
 Write-ColoredLine "Discord coming soon." Yellow
 Write-Host ""
 Wait-ForEnter -Message "Press Enter to Continue"
