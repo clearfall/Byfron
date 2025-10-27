@@ -1,27 +1,15 @@
 # ============================================================
-# Byfron PC Check | by @clearfall
+# Byfron PC Diagnostic Hub (cleaned + sectioned + menu)
+# Author: merged/updated for user by ChatGPT (profile: @clearfall style)
 # ============================================================
 
-$IsAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()
-).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-
-if (-not $IsAdmin) {
-    Write-Host "`n[WARNING] This script is NOT running with Administrator privileges." -ForegroundColor Red
-    Write-Host "[ACTION] Please right-click PowerShell and select 'Run as Administrator.'" -ForegroundColor Yellow
-    Write-Host ""
-    Pause
-    exit 1
-}
-
+#region Helper Functions & Elevation
 function Write-ColoredLine {
-    param (
-        [string]$Text,
-        [ConsoleColor]$Color = 'White'
-    )
-    $oldColor = $Host.UI.RawUI.ForegroundColor
+    param ([string]$Text, [ConsoleColor]$Color = 'White')
+    $old = $Host.UI.RawUI.ForegroundColor
     $Host.UI.RawUI.ForegroundColor = $Color
     Write-Host $Text
-    $Host.UI.RawUI.ForegroundColor = $oldColor
+    $Host.UI.RawUI.ForegroundColor = $old
 }
 
 function Center-Text {
@@ -32,20 +20,52 @@ function Center-Text {
 }
 
 function Wait-ForEnter {
-    param(
-        [string]$Message = "Press Enter to Continue"
-    )
-    Start-Sleep -Seconds 1
+    param([string]$Message = "Press Enter to Continue")
+    Write-ColoredLine ""
     Write-ColoredLine $Message Yellow
     while ($true) {
         if ([System.Console]::KeyAvailable) {
-            $key = [System.Console]::ReadKey($true)
-            if ($key.Key -eq "Enter") { break }
+            $k = [System.Console]::ReadKey($true)
+            if ($k.Key -eq 'Enter') { break }
+            if ($k.Key -eq 'Escape') { break }
         }
         Start-Sleep -Milliseconds 100
     }
 }
 
+function Show-LoadingBar {
+    param([int]$Iterations = 10, [int]$DelayMs = 80)
+    for ($i = 0; $i -le $Iterations; $i++) {
+        $percent = $i * (100 / $Iterations)
+        $bar = "#" * $i + "-" * ($Iterations - $i)
+        Write-Host -NoNewline "`rProgress: [ $bar ] $([math]::Round($percent))% " -ForegroundColor White
+        Start-Sleep -Milliseconds $DelayMs
+    }
+    Write-Host ""
+}
+
+# Elevation check - relaunch as admin if needed
+function Ensure-RunAsAdmin {
+    $IsAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()
+    ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+
+    if (-not $IsAdmin) {
+        $scriptPath = $MyInvocation.MyCommand.Definition
+        if (-not (Test-Path $scriptPath)) {
+            Write-ColoredLine "[ERROR] Cannot locate script path. Please run this script from a file." Red
+            Pause
+            exit 1
+        }
+        Write-ColoredLine "[INFO] Relaunching with admin rights..." Yellow
+        Start-Process -FilePath "powershell.exe" -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`"" -Verb RunAs
+        exit
+    }
+}
+#endregion
+
+Ensure-RunAsAdmin
+
+#region Banner + Header
 Clear-Host
 Center-Text "__________          _____                      " Yellow
 Center-Text "\______   \___.__._/ ____\______  ____   ____  " Yellow
@@ -53,56 +73,491 @@ Center-Text " |    |  _<   |  |\   __\\_  __ \/  _ \ /    \ " Yellow
 Center-Text " |    |   \\___  | |  |   |  | \(  <_> )   |  \" Yellow
 Center-Text " |______  // ____| |__|   |__|   \____/|___|  /" Yellow
 Center-Text "        \/ \/                               \/ " Yellow
-Write-Host ""
+Write-ColoredLine ""
 Center-Text "=== Recording Rule Hub ===" Yellow
-Center-Text "System Initialization Sequence" White
+Center-Text "System Diagnostic Hub (clean layout + menu)" White
 Write-Host ""
+#endregion
 
-# ============================================================
-# CPU + GPU Checks
-# ============================================================
+#region Globals: cheat signatures, search paths
+$CheatProcessNames = @(
+    "cheatengine","cheat","aimbot","aim_bot","injector","hax","hack",
+    "newui","newui.exe","wallhack","esp","rage","aim","xenos","intelpwn"
+) | ForEach-Object { $_.ToLower().Trim() } 
 
-$cpu = Get-WmiObject Win32_Processor | Select-Object -First 1
-if ($cpu.NumberOfCores -ge 4 -and $cpu.MaxClockSpeed -ge 2500) {
-    Write-Host "Detected CPU: $($cpu.Name)" -ForegroundColor Green
-    Write-Host "CPU check passed." -ForegroundColor Green
-} else {
-    Write-Host "Detected CPU: $($cpu.Name)" -ForegroundColor Red
-    Write-Host "CPU may be under minimum recommended specs." -ForegroundColor Yellow
+# Common filenames to search for
+$CheatFileNames = @("newui.exe","cheatengine.exe","injector.exe","loader.exe","hack.dll","_license.dat")
+
+# Common locations to quickly scan (reduces full C:\ recursion)
+$SearchLocations = @(
+    "$env:ProgramFiles",
+    "$env:ProgramFiles(x86)",
+    "$env:ProgramData",
+    "$env:SystemDrive\Users",
+    "$env:SystemDrive\Temp",
+    "$env:SystemDrive\Users\Public",
+    "$env:SystemDrive\PerfLogs"
+)
+#endregion
+
+#region Core check functions (each returns an array of result strings with prefix SUCCESS/FAILURE/WARNING/INFO)
+function Run-CPU-GPU-Check {
+    $out = @()
+    try {
+        $cpu = Get-CimInstance -ClassName Win32_Processor -ErrorAction Stop | Select-Object -First 1
+        if ($cpu.NumberOfCores -ge 4 -and $cpu.MaxClockSpeed -ge 2500) {
+            $out += "SUCCESS: Detected CPU: $($cpu.Name)"
+            $out += "SUCCESS: CPU meets recommended spec (Cores: $($cpu.NumberOfCores), MaxClockMHz: $($cpu.MaxClockSpeed))."
+        } else {
+            $out += "FAILURE: Detected CPU: $($cpu.Name)"
+            $out += "WARNING: CPU may be below recommended specs (Cores: $($cpu.NumberOfCores), MaxClockMHz: $($cpu.MaxClockSpeed))."
+        }
+    } catch {
+        $out += "WARNING: Could not query CPU: $($_.Exception.Message)"
+    }
+
+    try {
+        $gpu = Get-CimInstance -ClassName Win32_VideoController -ErrorAction Stop | Select-Object -First 1
+        $gpuName = $gpu.Name
+        $good = @("RTX 30","RTX 40","RX 6000","RX 7000","GTX 10","GTX 16")
+        $gpuIsGood = $false
+        foreach ($k in $good) { if ($gpuName -like "*$k*") { $gpuIsGood = $true; break } }
+        if ($gpuIsGood) {
+            $out += "SUCCESS: Detected GPU: $gpuName"
+            $out += "SUCCESS: GPU looks adequate."
+        } else {
+            $out += "WARNING: Detected GPU: $gpuName"
+            $out += "WARNING: GPU may be below recommended specs."
+        }
+    } catch {
+        $out += "WARNING: Could not query GPU: $($_.Exception.Message)"
+    }
+    return ,$out
 }
 
-Write-Host ""
-
-$gpu = Get-WmiObject Win32_VideoController | Select-Object -First 1
-$gpuName = $gpu.Name
-$goodGPUs = @("RTX 30", "RTX 40", "RX 6000", "RX 7000")
-$gpuIsGood = $false
-foreach ($keyword in $goodGPUs) {
-    if ($gpuName -like "*$keyword*") { $gpuIsGood = $true; break }
+function Run-Module-Integrity-Check {
+    $out = @()
+    $modulesPath = "C:\Program Files\WindowsPowerShell\Modules"
+    $defaultModules = @("Microsoft.PowerShell.Archive","Microsoft.PowerShell.Diagnostics","Microsoft.PowerShell.Host",
+        "Microsoft.PowerShell.LocalAccounts","Microsoft.PowerShell.Management","Microsoft.PowerShell.Security",
+        "Microsoft.PowerShell.Utility","PackageManagement","PowerShellGet","PSReadLine","Pester","ThreadJob")
+    try {
+        if (-not (Test-Path $modulesPath)) {
+            $out += "INFO: Modules path not present: $modulesPath"
+            $out += "SUCCESS: Nothing to check in modules path."
+            return ,$out
+        }
+        $deletedAny = $false
+        Get-ChildItem $modulesPath -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+            $moduleName = $_.Name
+            $modulePath = $_.FullName
+            $isDefault = $defaultModules -contains $moduleName
+            if (-not $isDefault) {
+                # Check for unsigned files inside module folder
+                $files = Get-ChildItem $modulePath -Recurse -File -ErrorAction SilentlyContinue
+                $unauth = @()
+                foreach ($f in $files) {
+                    try {
+                        $sig = Get-AuthenticodeSignature $f.FullName
+                        if ($sig.Status -ne 'Valid' -and $sig.SignerCertificate -ne $null) {
+                            $unauth += $f
+                        } elseif ($sig.Status -ne 'Valid' -and $sig.SignerCertificate -eq $null) {
+                            $unauth += $f
+                        }
+                    } catch { }
+                }
+                if ($unauth.Count -gt 0) {
+                    foreach ($a in $unauth) {
+                        try { Remove-Item $a.FullName -Force -ErrorAction Stop; $deletedAny = $true; $out += "FAILURE: Removed unauthorized file: $($a.FullName)" } catch { $out += "WARNING: Could not remove $($a.FullName): $($_.Exception.Message)" }
+                    }
+                } else {
+                    $out += "SUCCESS: Module '$moduleName' passed signature check."
+                }
+            } else {
+                $out += "INFO: Skipping default module: $moduleName"
+            }
+        }
+        if (-not $deletedAny) { $out += "SUCCESS: No unauthorized modules/files found in modules path." }
+    } catch {
+        $out += "WARNING: Module integrity check failed: $($_.Exception.Message)"
+    }
+    return ,$out
 }
 
-if ($gpuIsGood) {
-    Write-Host "Detected GPU: $gpuName" -ForegroundColor Green
-    Write-Host "GPU check passed." -ForegroundColor Green
-} else {
-    Write-Host "Detected GPU: $gpuName" -ForegroundColor Red
-    Write-Host "GPU may be below recommended specs." -ForegroundColor Yellow
+function Run-Windows-Checks {
+    $out = @()
+    # OS check
+    try {
+        $os = Get-CimInstance Win32_OperatingSystem -ErrorAction Stop
+        $out += "SUCCESS: Running on Windows: $($os.Caption) (Build $($os.BuildNumber))"
+    } catch {
+        $out += "FAILURE: OS check failed."
+    }
+
+    # Memory integrity (HVCI)
+    try {
+        $regPath = "HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity"
+        $enabled = Get-ItemPropertyValue -Path $regPath -Name "Enabled" -ErrorAction Stop
+        $out += "SUCCESS: Memory Integrity supported."
+        if ($enabled -eq 1) { $out += "SUCCESS: Memory Integrity is ON." } else { $out += "WARNING: Memory Integrity is OFF." }
+    } catch { $out += "WARNING: Memory Integrity not supported or inaccessible." }
+
+    # Defender
+    try {
+        $def = Get-MpComputerStatus -ErrorAction Stop
+        $svc = Get-Service -Name WinDefend -ErrorAction SilentlyContinue
+        if ($def.AntivirusEnabled -and $svc.Status -eq 'Running') {
+            if (-not $def.RealTimeProtectionEnabled) {
+                try { Set-MpPreference -DisableRealtimeMonitoring $false -ErrorAction SilentlyContinue } catch {}
+                $out += "WARNING: Real-time protection was OFF. Attempted re-enable."
+            } else { $out += "SUCCESS: Real-time protection is ON." }
+        } else {
+            $out += "FAILURE: Microsoft Defender Antivirus is not running."
+        }
+    } catch { $out += "WARNING: Could not query Windows Defender." }
+
+    # Exclusions
+    try {
+        $ex = (Get-MpPreference -ErrorAction Stop).ExclusionPath
+        if ($ex -and $ex.Count -gt 0) {
+            $out += "FAILURE: Defender exclusions found:`n$($ex -join "`n")"
+        } else { $out += "SUCCESS: No Defender exclusions set." }
+    } catch { $out += "WARNING: Could not check Defender exclusions." }
+
+    # Threats
+    try {
+        $th = Get-MpThreat -ErrorAction Stop | Where-Object { $_.Status -eq 'Active' }
+        if ($th) {
+            foreach ($t in $th) { $out += "FAILURE: Active threat: $($t.ThreatName) | $($t.Resources)" }
+        } else { $out += "SUCCESS: No active threats." }
+    } catch { $out += "WARNING: Threat query failed." }
+
+    # Powershell binary signature
+    try {
+        $psPath = "$env:windir\System32\WindowsPowerShell\v1.0\powershell.exe"
+        $sig = Get-AuthenticodeSignature -FilePath $psPath -ErrorAction Stop
+        if ($sig.Status -eq 'Valid' -and $sig.SignerCertificate.Subject -like '*Microsoft*') {
+            $out += "SUCCESS: PowerShell binary signature valid."
+        } else { $out += "FAILURE: PowerShell binary signature invalid." }
+    } catch { $out += "WARNING: Could not validate PowerShell binary signature." }
+
+    return ,$out
 }
 
-Write-ColoredLine ""
-Center-Text "=== Discord Server ===" Yellow
-Center-Text "Coming soon..." White
-Write-ColoredLine ""
-Center-Text "=== Credits ===" Yellow
-Center-Text "Made by @clearfall" White
-Write-Host ""
-Wait-ForEnter -Message "Press Enter to Continue"
-Clear-Host
+function Run-Cheat-Scan {
+    <#
+      Purpose: Look for known cheat processes and common files (newui.exe, *_license.dat).
+      The search is restricted to common locations for speed, and also checks processes.
+    #>
+    $out = @()
+    $foundAny = $false
+    # 1) Process scan
+    try {
+        $procs = Get-Process -ErrorAction SilentlyContinue
+        foreach ($p in $procs) {
+            $pn = $p.ProcessName.ToLower()
+            foreach ($sig in $CheatProcessNames) {
+                if ($pn -like "*$sig*") {
+                    $out += "FAILURE: Cheat-related process detected: $($p.ProcessName) (PID $($p.Id))"
+                    $foundAny = $true
+                    break
+                }
+            }
+        }
+        if (-not $foundAny) { $out += "SUCCESS: No known cheat-related processes detected." }
+    } catch {
+        $out += "WARNING: Process scan failed: $($_.Exception.Message)"
+    }
 
-# ============================================================
-# STEP 1 + 2 (Your Original Logic)
-# ============================================================
+    # 2) File scan for newui.exe and _license.dat and other cheat filenames
+    $foundFiles = @()
+    foreach ($loc in $SearchLocations) {
+        if (-not $loc) { continue }
+        try {
+            $items = Get-ChildItem -Path $loc -Filter "*" -Recurse -File -ErrorAction SilentlyContinue -Depth 4
+        } catch {
+            # older PS versions may not support -Depth; fallback
+            try { $items = Get-ChildItem -Path $loc -Recurse -File -ErrorAction SilentlyContinue } catch { $items = @() }
+        }
+        foreach ($f in $items) {
+            $fn = $f.Name.ToLower()
+            foreach ($pattern in $CheatFileNames) {
+                if ($fn -like "*$pattern*") {
+                    $foundFiles += $f.FullName
+                }
+            }
+            # also check patterns that contain 'cheat' or 'inject'
+            if ($fn -like "*cheat*" -or $fn -like "*inject*" -or $fn -like "*hack*") {
+                if (-not ($foundFiles -contains $f.FullName)) { $foundFiles += $f.FullName }
+            }
+        }
+    }
 
-# Keep all your existing logic here
-# (System Check + Process Explorer download + registry import, etc.)
-# unchanged.
+    if ($foundFiles.Count -gt 0) {
+        foreach ($f in $foundFiles) { 
+            if ($f.ToLower() -like "*newui.exe*") {
+                $out += "FAILURE: Found newui.exe -> $f"
+            } elseif ($f.ToLower() -like "*_license.dat") {
+                $out += "FAILURE: Found _license.dat -> $f"
+            } else {
+                $out += "FAILURE: Found suspicious file -> $f"
+            }
+        }
+    } else {
+        $out += "SUCCESS: No suspicious cheat files found in common locations."
+    }
+
+    return ,$out
+}
+
+function Run-ProcessExplorer-Step {
+    $out = @()
+    $baseFolder = "C:\ToolsETA"
+    $extractFolder = Join-Path $baseFolder "ProcessExplorer"
+    $regFileUrl = "https://pastebin.com/raw/gse8NxwU"
+    $zipUrl = "https://download.sysinternals.com/files/ProcessExplorer.zip"
+    $zipPath = Join-Path $baseFolder "ProcessExplorer.zip"
+
+    try {
+        if (-not (Test-Path $baseFolder)) { New-Item -ItemType Directory -Path $baseFolder -Force | Out-Null }
+        $out += "INFO: Using Tools folder: $baseFolder"
+    } catch { $out += "WARNING: Could not prepare Tools folder: $($_.Exception.Message)" }
+
+    try {
+        Invoke-WebRequest -Uri $regFileUrl -OutFile (Join-Path $baseFolder "procexp_config.reg") -UseBasicParsing -ErrorAction Stop
+        $out += "SUCCESS: Downloaded Process Explorer registry configuration."
+    } catch { $out += "WARNING: Could not download registry config: $($_.Exception.Message)" }
+
+    # Try to find procexp64.exe already in extraction folder
+    try {
+        $actualExe = Get-ChildItem -Path $extractFolder -Filter "procexp64.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($actualExe) {
+            $out += "SUCCESS: Found procexp64.exe at $($actualExe.FullName). Ready to launch manually."
+        } else {
+            $out += "INFO: Process Explorer not found in $extractFolder. Attempting to download..."
+            try {
+                Invoke-WebRequest -Uri $zipUrl -OutFile $zipPath -UseBasicParsing -ErrorAction Stop
+                Add-Type -AssemblyName System.IO.Compression.FileSystem
+                [System.IO.Compression.ZipFile]::ExtractToDirectory($zipPath, $extractFolder)
+                Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
+                $actualExe = Get-ChildItem -Path $extractFolder -Filter "procexp64.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+                if ($actualExe) { $out += "SUCCESS: Process Explorer extracted to $extractFolder." } else { $out += "WARNING: Extraction completed but procexp64.exe not found." }
+            } catch { $out += "WARNING: Could not download/extract Process Explorer: $($_.Exception.Message)" }
+        }
+    } catch { $out += "WARNING: Process Explorer step failure: $($_.Exception.Message)" }
+
+    return ,$out
+}
+#endregion
+
+#region Result rendering & counting
+function Write-Section {
+    param([string]$Title, [string[]]$Lines)
+    Write-ColoredLine ""
+    Center-Text "=== $Title ===" Yellow
+    foreach ($line in $Lines) {
+        if ($line -match "^SUCCESS") { Write-Host $line -ForegroundColor Green }
+        elseif ($line -match "^FAILURE") { Write-Host $line -ForegroundColor Red }
+        elseif ($line -match "^WARNING") { Write-Host $line -ForegroundColor Yellow }
+        elseif ($line -match "^INFO") { Write-Host $line -ForegroundColor Cyan }
+        else { Write-Host $line }
+    }
+}
+
+function Summarize-Results {
+    param([string[]]$AllLines)
+    $total = ($AllLines | Where-Object { $_ -match '^(SUCCESS|FAILURE|WARNING)' }).Count
+    $success = ($AllLines | Where-Object { $_ -match '^SUCCESS' }).Count
+    $failed = ($AllLines | Where-Object { $_ -match '^FAILURE' }).Count
+    $warning = ($AllLines | Where-Object { $_ -match '^WARNING' }).Count
+    $rate = if ($total -gt 0) { [math]::Round(($success / $total) * 100, 0) } else { 0 }
+    $color = if ($rate -eq 100) { "Green" } else { "Red" }
+    Write-ColoredLine ""
+    Write-Host ("Summary: Passed $success / $total  | Failed $failed | Warnings $warning | Success Rate: $rate%") -ForegroundColor $color
+}
+#endregion
+
+#region Menu & Control Flow
+function Show-MainMenu {
+    Clear-Host
+    Center-Text "=== Byfron Diagnostic Hub ===" Yellow
+    Write-ColoredLine ""
+    Center-Text "1) Full PC Check (all checks + cheat scan + modules + system)" White
+    Center-Text "2) CPU & GPU Check" White
+    Center-Text "3) System Security Check (Defender / Memory Integrity / Binary Sig)" White
+    Center-Text "4) Anti-Cheat / Cheat Artifact Scan (process & file search)" White
+    Center-Text "5) Process Explorer Step" White
+    Center-Text "6) Toggle Auto-Refresh Mode (re-run failed checks automatically)" White
+    Center-Text "7) Exit" White
+    Write-ColoredLine ""
+    Write-ColoredLine "Choose an option (1-7) and press Enter:" Yellow
+    $choice = Read-Host "> "
+    return $choice
+}
+
+$AutoRefresh = $false
+
+function Execute-Choice {
+    param([int]$choice)
+    switch ($choice) {
+        1 {
+            # Full PC Check
+            Clear-Host
+            Center-Text "Full PC Check" Yellow
+            Show-LoadingBar -Iterations 12 -DelayMs 60
+
+            $allLines = @()
+            $allLines += Run-CPU-GPU-Check
+            $allLines += Run-Module-Integrity-Check
+            $allLines += Run-Windows-Checks
+            $allLines += Run-Cheat-Scan
+
+            Write-Section "Full PC Check Results" $allLines
+            Summarize-Results -AllLines $allLines
+
+            # Auto-refresh behavior if enabled & failures exist
+            $fails = $allLines | Where-Object { $_ -match '^FAILURE' }
+            if ($fails -and $AutoRefresh) {
+                Write-ColoredLine ""
+                Write-ColoredLine "[AUTO] Auto-refresh is enabled. Re-checking failures every 10 seconds. Press Enter to stop." Yellow
+                while ($true) {
+                    Start-Sleep -Seconds 10
+                    if ([System.Console]::KeyAvailable) {
+                        $k = [System.Console]::ReadKey($true)
+                        if ($k.Key -eq 'Enter') { break }
+                    }
+                    Clear-Host
+                    Center-Text "Re-running failed checks..." Yellow
+                    Show-LoadingBar -Iterations 8 -DelayMs 50
+                    $allLines = @()
+                    $allLines += Run-CPU-GPU-Check
+                    $allLines += Run-Module-Integrity-Check
+                    $allLines += Run-Windows-Checks
+                    $allLines += Run-Cheat-Scan
+                    Write-Section "Full PC Check Results (Refresh)" $allLines
+                    Summarize-Results -AllLines $allLines
+                    $fails = $allLines | Where-Object { $_ -match '^FAILURE' }
+                    if (-not $fails) {
+                        Write-ColoredLine ""
+                        Write-ColoredLine "[AUTO] All checks passed on refresh. Press Enter to continue." Green
+                        Wait-ForEnter
+                        break
+                    } else {
+                        Write-ColoredLine "[AUTO] Failures remain. Press Enter to stop auto-refresh or wait for next refresh." Yellow
+                    }
+                }
+            } else {
+                Wait-ForEnter -Message "Press Enter to return to menu"
+            }
+        }
+        2 {
+            Clear-Host
+            Center-Text "CPU & GPU Check" Yellow
+            Show-LoadingBar -Iterations 8 -DelayMs 60
+            $lines = Run-CPU-GPU-Check
+            Write-Section "CPU/GPU" $lines
+            Summarize-Results -AllLines $lines
+            Wait-ForEnter -Message "Press Enter to return to menu"
+        }
+        3 {
+            Clear-Host
+            Center-Text "System Security Check" Yellow
+            Show-LoadingBar -Iterations 8 -DelayMs 60
+            $lines = Run-Windows-Checks
+            Write-Section "Security" $lines
+            Summarize-Results -AllLines $lines
+            Wait-ForEnter -Message "Press Enter to return to menu"
+        }
+        4 {
+            Clear-Host
+            Center-Text "Anti-Cheat / Cheat Artifact Scan" Yellow
+            Show-LoadingBar -Iterations 10 -DelayMs 50
+            $lines = Run-Cheat-Scan
+            Write-Section "Anti-Cheat Scan" $lines
+            Summarize-Results -AllLines $lines
+
+            # Specifically print any newui.exe or _license.dat paths
+            $foundNewUI = $lines | Where-Object { $_ -match "newui.exe" }
+            $foundLicense = $lines | Where-Object { $_ -match "_license.dat" }
+            if ($foundNewUI) {
+                Write-ColoredLine ""
+                Write-ColoredLine "newui.exe locations:" Yellow
+                foreach ($l in $foundNewUI) { Write-Host $l -ForegroundColor Red }
+            }
+            if ($foundLicense) {
+                Write-ColoredLine ""
+                Write-ColoredLine "_license.dat locations:" Yellow
+                foreach ($l in $foundLicense) { Write-Host $l -ForegroundColor Red }
+            }
+
+            # Auto-refresh loop if enabled and failures exist
+            $fails = $lines | Where-Object { $_ -match '^FAILURE' }
+            if ($fails -and $AutoRefresh) {
+                Write-ColoredLine ""
+                Write-ColoredLine "[AUTO] Auto-refresh is enabled. Re-running cheat scan every 10 seconds. Press Enter to stop." Yellow
+                while ($true) {
+                    Start-Sleep -Seconds 10
+                    if ([System.Console]::KeyAvailable) {
+                        $k = [System.Console]::ReadKey($true)
+                        if ($k.Key -eq 'Enter') { break }
+                    }
+                    Clear-Host
+                    Center-Text "Re-running Anti-Cheat Scan..." Yellow
+                    Show-LoadingBar -Iterations 6 -DelayMs 60
+                    $lines = Run-Cheat-Scan
+                    Write-Section "Anti-Cheat Scan (Refresh)" $lines
+                    Summarize-Results -AllLines $lines
+                    $fails = $lines | Where-Object { $_ -match '^FAILURE' }
+                    if (-not $fails) {
+                        Write-ColoredLine ""
+                        Write-ColoredLine "[AUTO] Anti-cheat scan clean. Press Enter to continue." Green
+                        Wait-ForEnter
+                        break
+                    } else {
+                        Write-ColoredLine "[AUTO] Failures remain. Press Enter to stop auto-refresh or wait for next refresh." Yellow
+                    }
+                }
+            } else {
+                Wait-ForEnter -Message "Press Enter to return to menu"
+            }
+        }
+        5 {
+            Clear-Host
+            Center-Text "Process Explorer Step" Yellow
+            Show-LoadingBar -Iterations 6 -DelayMs 80
+            $lines = Run-ProcessExplorer-Step
+            Write-Section "Process Explorer" $lines
+            Summarize-Results -AllLines $lines
+            Wait-ForEnter -Message "Press Enter to return to menu"
+        }
+        6 {
+            $AutoRefresh = -not $AutoRefresh
+            Clear-Host
+            if ($AutoRefresh) { Write-ColoredLine "[INFO] Auto-Refresh enabled: failed checks will be re-tested automatically." Yellow }
+            else { Write-ColoredLine "[INFO] Auto-Refresh disabled." Yellow }
+            Start-Sleep -Seconds 1.5
+        }
+        7 {
+            Clear-Host
+            Center-Text "Exiting..." Yellow
+            Start-Sleep -Seconds 1
+            exit 0
+        }
+        default {
+            Write-ColoredLine "[ERROR] Invalid selection." Red
+            Start-Sleep -Seconds 1
+        }
+    }
+}
+#endregion
+
+# Main loop
+while ($true) {
+    $sel = Show-MainMenu
+    if ([int]::TryParse($sel, [ref]$null)) {
+        Execute-Choice -choice ([int]$sel)
+    } else {
+        Write-ColoredLine "[ERROR] Please enter a number between 1 and 7." Red
+        Start-Sleep -Seconds 1
+    }
+}
