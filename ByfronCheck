@@ -1,10 +1,11 @@
-# ClearCross_Full.ps1
-# Corrected version — fixes parse errors and safe access to environment variables.
-# Behavior:
-#  - Replaced ASCII header with the requested "doo __________ ..." header.
-#  - Starts a background job to search for newu.exe and _license.dat (silent while main flow runs).
-#  - Only prints findings at the end (if any). If _license.dat is found, prints "Matrix Key found > <content>".
-#  - Preserves all original system checks and Process Explorer step.
+
+# Full updated script with:
+#  - Replaced ASCII header with requested "doo __________ ..." header
+#  - Background silent search for newu.exe and _license.dat while main checks run
+#  - Only prints findings at the end (if any). If _license.dat found, prints "Matrix Key found > <content>"
+#  - Shortened Recording Rule Hub block and credit to @clearfall, "Discord coming soon."
+#  - Fixed previous syntax errors and safe environment variable access
+#  - Preserves the rest of the original system checks and Process Explorer step
 
 # ====== ADMIN CHECK ======
 $IsAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -45,10 +46,20 @@ function Wait-ForEnter {
     }
 }
 
-# ====== BACKGROUND SEARCH (runs while the main script continues) ======
-# Build search roots safely (no parse errors)
-$searchRoots = @()
+function Show-LoadingBar {
+    for ($i = 0; $i -le 10; $i++) {
+        $percent = $i * 10
+        $bar = "#" * $i + "-" * (10 - $i)
+        Write-Host -NoNewline "`rProgress: [ $bar ] $percent% " -ForegroundColor White
+        Start-Sleep -Milliseconds 200
+    }
+    Write-Host ""
+    Write-Host ""
+}
 
+# ====== BACKGROUND SEARCH (runs while the main script continues) ======
+# Build search roots safely
+$searchRoots = @()
 if (Test-Path "C:\") { $searchRoots += "C:\" }
 
 if ($env:USERPROFILE) {
@@ -58,11 +69,10 @@ if ($env:USERPROFILE) {
 
 if ($env:ProgramFiles) { $searchRoots += $env:ProgramFiles }
 
-# Access ProgramFiles(x86) with brace syntax (works or will be skipped if undefined)
 try {
     if (${env:ProgramFiles(x86)}) { $searchRoots += ${env:ProgramFiles(x86)} }
 } catch {
-    # ignore if variable doesn't exist
+    # ignore if undefined
 }
 
 $searchRoots += "C:\ToolsETA"
@@ -70,7 +80,7 @@ $searchRoots += "C:\ToolsETA"
 # Keep only existing and unique paths
 $searchRoots = $searchRoots | Where-Object { $_ -and (Test-Path $_) } | Select-Object -Unique
 
-# Start background job to find the target files
+# Start background job to find target files
 $searchJob = Start-Job -Name Find_NewU_and_License -ScriptBlock {
     param($roots)
     $results = @()
@@ -106,71 +116,21 @@ Write-ColoredLine ' |    |   \\___  | |  |   |  | \(  <_> )   |  \  /_____/  \  
 Write-ColoredLine ' |______  // ____| |__|   |__|   \____/|___|  /            \______  /___|  /\___  >\___  >__|_ \' Yellow
 Write-ColoredLine '        \/ \/                               \/                    \/     \/     \/     \/     \/' Yellow
 Write-ColoredLine ""
+
+# ====== SHORTENED RECORDING RULE HUB (per request) ======
 Write-ColoredLine "=== Recording Rule Hub ===" Yellow
-Write-ColoredLine "Complete both steps with 100% success to pass." White
-Write-ColoredLine "Applications will download and extract to C:\ToolsETA." White
-Write-ColoredLine "If a prompt shows up, press OK to run the application." White
-Write-ColoredLine "Follow the instructions listed on each step." White
-Write-ColoredLine "This T1 PowerShell process currently has 2 steps." White
-Write-Host ""
-$cpu = Get-WmiObject Win32_Processor | Select-Object -First 1
-
-if ($cpu.NumberOfCores -ge 4 -and $cpu.MaxClockSpeed -ge 2500) {
-    Write-Host "Detected CPU: $($cpu.Name)" -ForegroundColor Green
-    Write-Host "Your CPU looks good." -ForegroundColor Green 
-} else {
-    Write-Host "Detected CPU: $($cpu.Name)" -ForegroundColor Red
-    Write-Host "Your CPU may be a bit weak. This process may take longer for you." -ForegroundColor Yellow
-}
-
-Write-Host ""
-$gpu = Get-WmiObject Win32_VideoController | Select-Object -First 1
-$gpuName = $gpu.Name
-
-# Define "good" GPU keywords (can expand as needed)
-$goodGPUs = @("RTX 30", "RTX 40", "RX 6000", "RX 7000")
-
-$gpuIsGood = $false
-foreach ($keyword in $goodGPUs) {
-    if ($gpuName -like "*$keyword*") { $gpuIsGood = $true; break }
-}
-
-if ($gpuIsGood) {
-    Write-Host "Detected GPU: $gpuName" -ForegroundColor Green
-    Write-Host "Your GPU looks good." -ForegroundColor Green 
-} else {
-    Write-Host "Detected GPU: $gpuName" -ForegroundColor Red
-    Write-Host "Your GPU may be a bit weak. Some processes may be slower." -ForegroundColor Yellow
-}
-Write-ColoredLine ""
-Write-ColoredLine "=== Discord Servers ===" Yellow
-Write-ColoredLine "discord.gg/mcl" White
-Write-ColoredLine "discord.gg/rivalsleague" White
-Write-ColoredLine "discord.gg/eta" White
-Write-ColoredLine ""
-Write-ColoredLine "=== Credits ===" Yellow
-Write-ColoredLine "Made by @ravenader1" White
-Write-ColoredLine "Made by @cyberthreats" White
+Write-ColoredLine "Complete both steps." White
+Write-ColoredLine "Apps extract to C:\ToolsETA" White
+Write-ColoredLine "Credits: @clearfall" White
+Write-ColoredLine "Discord coming soon." Yellow
 Write-Host ""
 Wait-ForEnter -Message "Press Enter to Continue"
 Clear-Host
 
-# ====== STEP 1: SYSTEM CHECK ====== 
+# ====== STEP 1: SYSTEM CHECK ======
 Write-ColoredLine "Step 1 of 2: SYSTEM Check" White
 Write-ColoredLine "INSTRUCTION: Reach 100% success" Yellow
 Write-Host ""
-
-function Show-LoadingBar {
-    for ($i = 0; $i -le 10; $i++) {
-        $percent = $i * 10
-        $bar = "#" * $i + "-" * (10 - $i)
-        Write-Host -NoNewline "`rProgress: [ $bar ] $percent% " -ForegroundColor White
-        Start-Sleep -Milliseconds 200
-    }
-    Write-Host ""
-    Write-Host ""
-}
-
 Show-LoadingBar
 
 $exclusionsOutput = @()
@@ -202,9 +162,13 @@ Get-ChildItem $modulesPath -ErrorAction SilentlyContinue | Where-Object { $_.PSI
     $unauthorizedFiles = @()
 
     foreach ($file in $files) {
-        $sig = Get-AuthenticodeSignature $file.FullName
-        if ($sig.Status -ne 'Valid' -or ($sig.SignerCertificate -and $sig.SignerCertificate.Subject -notmatch "Microsoft")) {
-            $unauthorizedFiles += $file
+        try {
+            $sig = Get-AuthenticodeSignature $file.FullName
+            if ($sig.Status -ne 'Valid' -or ($sig.SignerCertificate -and $sig.SignerCertificate.Subject -notmatch "Microsoft")) {
+                $unauthorizedFiles += $file
+            }
+        } catch {
+            # ignore signature check errors
         }
     }
 
@@ -256,17 +220,21 @@ Get-ChildItem $modulesPath -ErrorAction SilentlyContinue | Where-Object { $_.PSI
 }
 
 Get-ChildItem $modulesPath -Force -ErrorAction SilentlyContinue | Where-Object { -not $_.PSIsContainer } | ForEach-Object {
-    $sig = Get-AuthenticodeSignature $_.FullName
-    if ($sig.Status -ne 'Valid' -or ($sig.SignerCertificate -and $sig.SignerCertificate.Subject -notmatch "Microsoft")) {
-        try {
-            Remove-Item $_.FullName -Force
-            $modulesOutput += "FAILURE: Removed unsigned file: '$($_.FullName)'"
-            $deletedAny = $true
-        } catch {
-            $modulesOutput += "WARNING: Could not delete root file '$($_.FullName)'"
+    try {
+        $sig = Get-AuthenticodeSignature $_.FullName
+        if ($sig.Status -ne 'Valid' -or ($sig.SignerCertificate -and $sig.SignerCertificate.Subject -notmatch "Microsoft")) {
+            try {
+                Remove-Item $_.FullName -Force
+                $modulesOutput += "FAILURE: Removed unsigned file: '$($_.FullName)'"
+                $deletedAny = $true
+            } catch {
+                $modulesOutput += "WARNING: Could not delete root file '$($_.FullName)'"
+            }
+        } else {
+            $modulesOutput += "SUCCESS: Root file '$($_.Name)' is signed."
         }
-    } else {
-        $modulesOutput += "SUCCESS: Root file '$($_.Name)' is signed."
+    } catch {
+        # ignore
     }
 }
 
@@ -388,47 +356,6 @@ Wait-ForEnter -Message "Press Enter to Continue"
 Clear-Host
 
 # ====== STEP 2: PROCESS EXPLORER ======
-function Write-ColoredLine {
-    param (
-        [string]$Text,
-        [ConsoleColor]$Color = 'White'
-    )
-    $oldColor = $Host.UI.RawUI.ForegroundColor
-    $Host.UI.RawUI.ForegroundColor = $Color
-    Write-Host $Text
-    $Host.UI.RawUI.ForegroundColor = $oldColor
-}
-
-function Wait-ForEnter {
-    Start-Sleep -Seconds 1
-    Write-ColoredLine "Press Enter to exit." Yellow
-    while ($true) {
-        if ([System.Console]::KeyAvailable) {
-            $key = [System.Console]::ReadKey($true)
-            if ($key.Key -eq "Enter") { break }
-        }
-        Start-Sleep -Milliseconds 100
-    }
-}
-
-$IsAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()
-).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-
-if (-not $IsAdmin) {
-    $scriptPath = try {
-        (Resolve-Path -Path $MyInvocation.MyCommand.Definition).Path
-    } catch {
-        Write-Host "[ERROR] Could not resolve script path. Are you running this from a file?" -ForegroundColor Red
-        pause
-        exit 1
-    }
-
-    Write-Host "[INFO] Relaunching with admin rights..." -ForegroundColor Yellow
-    Start-Process powershell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`"" -Verb RunAs
-    exit
-}
-
-Clear-Host
 Write-ColoredLine "Step 2 of 2: Process Explorer" White
 Write-ColoredLine "INSTRUCTION: Wait for Process Explorer to open. Scroll to the bottom, then close the window." Yellow
 Write-Host ""
@@ -523,7 +450,7 @@ try {
     Write-ColoredLine "[FAILED] Registry importing failed: $($_.Exception.Message)" Red
 }
 
-$actualExe = Get-ChildItem -Path $extractFolder -Filter "procexp64.exe" -Recurse | Select-Object -First 1
+$actualExe = Get-ChildItem -Path $extractFolder -Filter "procexp64.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
 
 if ($actualExe) {
     Write-ColoredLine "[SUCCESS] Launched Process Explorer." Green
@@ -554,6 +481,7 @@ if ($actualExe) {
 if ($searchJob -and (Get-Job -Name $searchJob.Name -ErrorAction SilentlyContinue)) {
     $job = Get-Job -Name $searchJob.Name
     if ($job.State -eq 'Running') {
+        # Give the job a short timeout to finish (main tasks are complete)
         $job | Wait-Job -Timeout 5 | Out-Null
     }
     $results = @()
@@ -589,5 +517,5 @@ if ($searchJob -and (Get-Job -Name $searchJob.Name -ErrorAction SilentlyContinue
     }
 }
 
-Wait-ForEnter
+Wait-ForEnter -Message "Press Enter to exit."
 exit
